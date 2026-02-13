@@ -1,33 +1,21 @@
 import streamlit as st
+from streamlit_gsheets import GSheetsConnection
 import pandas as pd
-import plotly.express as px
 import datetime
-import os
 
-# Configuração da página para Mobile
-st.set_page_config(page_title="Body Evolution", layout="centered")
+# Configuração da página
+st.set_page_config(page_title="Weight Control", page_icon="💪", layout="centered")
 
-# Nome do arquivo de dados
-DATA_FILE = "body_data.csv"
+st.title("📊 Body Evolution (Cloud Save)")
 
-# Função para carregar dados
-def load_data():
-    if os.path.exists(DATA_FILE):
-        try:
-            df = pd.read_csv(DATA_FILE, parse_dates=['Date'])
-            # Garante que as colunas existam
-            required_columns = ['Date', 'Weight', 'Body Fat (kg)', 'Muscle Mass', 'Waist', 'Body Water']
-            for col in required_columns:
-                if col not in df.columns:
-                    df[col] = 0.0
-            return df
-        except:
-            pass
-    return pd.DataFrame(columns=['Date', 'Weight', 'Body Fat (kg)', 'Muscle Mass', 'Waist', 'Body Water'])
+# Conexão com Google Sheets
+conn = st.connection("gsheets", type=GSheetsConnection)
 
-df = load_data()
+# Função para ler os dados
+def get_data():
+    return conn.read(ttl="0s") # ttl=0 garante que ele leia os dados mais recentes
 
-st.title("📊 Body Evolution Tracker")
+df = get_data()
 
 # --- ENTRADA DE DADOS ---
 with st.sidebar:
@@ -40,18 +28,22 @@ with st.sidebar:
     water = st.number_input("Body Water (%)", format="%.1f", step=0.1)
     
     if st.button("Save Entry"):
-        new_row = {
-            'Date': pd.to_datetime(date),
-            'Weight': weight,
-            'Body Fat (kg)': fat_kg,
-            'Muscle Mass': muscle,
-            'Waist': waist,
-            'Body Water': water
-        }
-        new_data = pd.DataFrame([new_row])
-        df = pd.concat([df, new_data]).drop_duplicates(subset=['Date'], keep='last').sort_values('Date')
-        df.to_csv(DATA_FILE, index=False)
-        st.success("Saved!")
+        # Preparar a nova linha
+        new_row = pd.DataFrame([{
+            "Date": date.strftime("%Y-%m-%d"),
+            "Weight": weight,
+            "Body Fat (kg)": fat_kg,
+            "Muscle Mass": muscle,
+            "Waist": waist,
+            "Body Water": water
+        }])
+        
+        # Adicionar aos dados existentes
+        updated_df = pd.concat([df, new_row], ignore_index=True)
+        
+        # Salvar na planilha
+        conn.update(data=updated_df)
+        st.success("Saved to Google Sheets!")
         st.rerun()
 
 # --- VISUALIZAÇÃO ---
@@ -63,18 +55,13 @@ if not df.empty:
     metric = st.selectbox("Select Metric", metrics_options)
     
     # Gráfico
+    import plotly.express as px
     fig = px.line(df, x='Date', y=metric, markers=True, title=f"Evolution: {metric}")
-    fig.update_layout(hovermode="x unified", margin=dict(l=10, r=10, t=40, b=10))
     st.plotly_chart(fig, use_container_width=True)
 
     # Tabela
     st.divider()
-    st.subheader("History")
-    edited_df = st.data_editor(df, num_rows="dynamic", use_container_width=True)
-    
-    if st.button("Update History"):
-        edited_df.to_csv(DATA_FILE, index=False)
-        st.success("Updated!")
-        st.rerun()
+    st.subheader("Cloud History")
+    st.dataframe(df, use_container_width=True)
 else:
-    st.info("No data yet. use the sidebar to add entries.")
+    st.info("No data found in Google Sheets. Add your first entry!")

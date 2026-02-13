@@ -15,7 +15,7 @@ def load_data():
     if os.path.exists(DATA_FILE):
         try:
             df = pd.read_csv(DATA_FILE, parse_dates=['Date'])
-            # Garante que as colunas existam se o arquivo for antigo
+            # Garante que as colunas existam
             required_columns = ['Date', 'Weight', 'Body Fat (kg)', 'Muscle Mass', 'Waist', 'Body Water']
             for col in required_columns:
                 if col not in df.columns:
@@ -40,18 +40,41 @@ with st.sidebar:
     water = st.number_input("Body Water (%)", format="%.1f", step=0.1)
     
     if st.button("Save Entry"):
-        new_data = pd.DataFrame([[pd.to_datetime(date), weight, fat_kg, muscle, waist, water]], 
-                                columns=['Date', 'Weight', 'Body Fat (kg)', 'Muscle Mass', 'Waist', 'Body Water'])
-        
-        # Remove duplicados da mesma data e ordena
+        new_row = {
+            'Date': pd.to_datetime(date),
+            'Weight': weight,
+            'Body Fat (kg)': fat_kg,
+            'Muscle Mass': muscle,
+            'Waist': waist,
+            'Body Water': water
+        }
+        new_data = pd.DataFrame([new_row])
         df = pd.concat([df, new_data]).drop_duplicates(subset=['Date'], keep='last').sort_values('Date')
         df.to_csv(DATA_FILE, index=False)
-        st.success("Saved successfully!")
+        st.success("Saved!")
         st.rerun()
 
 # --- VISUALIZAÇÃO ---
 if not df.empty:
     st.subheader("Your Progress")
     
-    # Seletor de métrica para o gráfico
-    metrics_options = ['Weight', 'Body Fat (kg)', 'Muscle Mass', 'Wa
+    # Seletor de métrica
+    metrics_options = ['Weight', 'Body Fat (kg)', 'Muscle Mass', 'Waist', 'Body Water']
+    metric = st.selectbox("Select Metric", metrics_options)
+    
+    # Gráfico
+    fig = px.line(df, x='Date', y=metric, markers=True, title=f"Evolution: {metric}")
+    fig.update_layout(hovermode="x unified", margin=dict(l=10, r=10, t=40, b=10))
+    st.plotly_chart(fig, use_container_width=True)
+
+    # Tabela
+    st.divider()
+    st.subheader("History")
+    edited_df = st.data_editor(df, num_rows="dynamic", use_container_width=True)
+    
+    if st.button("Update History"):
+        edited_df.to_csv(DATA_FILE, index=False)
+        st.success("Updated!")
+        st.rerun()
+else:
+    st.info("No data yet. use the sidebar to add entries.")

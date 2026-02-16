@@ -17,7 +17,7 @@ st.markdown("""
 
 # --- BANCO DE DADOS LOCAL ---
 def conectar_banco():
-    conn = sqlite3.connect('body_evolution_v4.db', check_same_thread=False)
+    conn = sqlite3.connect('body_evolution_v5.db', check_same_thread=False)
     cursor = conn.cursor()
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS progresso (
@@ -37,8 +37,10 @@ st.title("📊 BODY EVOLUTION PRO")
 with st.sidebar:
     st.header("⚙️ Gestão de Dados")
     
-    with st.expander("📤 Importar Backup CSV"):
+    with st.expander("📤 Importar Backup CSV (Correção)"):
+        st.info("Use isto se os dados sumirem ou derem erro.")
         arquivo_subido = st.file_uploader("Suba o CSV do Google Sheets", type="csv")
+        
         if arquivo_subido:
             try:
                 # Tenta ler com decimal , ou .
@@ -47,12 +49,17 @@ with st.sidebar:
                 
                 if st.button("Confirmar Importação"):
                     cursor = conn.cursor()
-                    cursor.execute("DELETE FROM progresso")
+                    cursor.execute("DELETE FROM progresso") # Limpa banco atual
                     
+                    # Converte a coluna 0 para data para evitar erros futuros
+                    # errors='coerce' transforma datas ruins em NaT (Not a Time)
+                    df_imp.iloc[:, 0] = pd.to_datetime(df_imp.iloc[:, 0], dayfirst=True, errors='coerce')
+                    df_imp = df_imp.dropna(subset=[df_imp.columns[0]]) # Remove linhas com data inválida
+                    
+                    count = 0
                     for _, row in df_imp.iterrows():
-                        # Lógica flexível: se a coluna não existir no CSV, usa 0 ou ""
-                        # row[0]=Data, row[1]=Peso, row[2]=M.Magra, row[3]=Gordura, row[4]=Cintura, row[5]=Agua, row[6]=Energia, row[7]=Notas
-                        d = str(row[0])
+                        # Garante formato YYYY-MM-DD string
+                        d = row[0].strftime("%Y-%m-%d")
                         p = float(row[1]) if len(row) > 1 else 0.0
                         m = float(row[2]) if len(row) > 2 else 0.0
                         g = float(row[3]) if len(row) > 3 else 0.0
@@ -65,9 +72,10 @@ with st.sidebar:
                             INSERT INTO progresso (data, peso, massa_magra, gordura, cintura, agua, energia, notas)
                             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                         ''', (d, p, m, g, c, a, e, n))
+                        count += 1
                     
                     conn.commit()
-                    st.success("Dados importados!")
+                    st.success(f"{count} registros importados e corrigidos!")
                     st.rerun()
             except Exception as e:
                 st.error(f"Erro no CSV: {e}")
@@ -90,29 +98,43 @@ with st.sidebar:
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ''', (d_data.strftime("%Y-%m-%d"), d_peso, d_magra, d_gord, d_cint, d_agua, d_ener, d_notas))
         conn.commit()
+        st.success("Salvo!")
         st.rerun()
 
-# --- VISUALIZAÇÃO ---
-df = pd.read_sql_query("SELECT * FROM progresso", conn)
+# --- VISUALIZAÇÃO SEGURA ---
+try:
+    df = pd.read_sql_query("SELECT * FROM progresso", conn)
 
-if not df.empty:
-    df['data'] = pd.to_datetime(df['data'])
-    df = df.sort_values("data")
+    if not df.empty:
+        # AQUI ESTÁ A CORREÇÃO PRINCIPAL DO ERRO
+        # errors='coerce' vai transformar a data "impossível" em NaT (vazio) e não vai travar o app
+        df['data'] = pd.to_datetime(df['data'], errors='coerce')
+        df = df.dropna(subset=['data']) # Joga fora a linha problemática
+        df = df.sort_values("data")
 
-    # Métricas
-    cols_nomes = ["peso", "massa_magra", "gordura", "cintura", "agua", "energia"]
-    m_cols = st.columns(len(cols_nomes))
-    for i, c in enumerate(cols_nomes):
-        val = df[c].iloc[-1]
-        dif = val - df[c].iloc[-2] if len(df) > 1 else 0
-        m_cols[i].metric(c.replace("_", " ").title(), f"{val}", f"{dif:.1f}")
+        if not df.empty:
+            # Métricas
+            cols_nomes = ["peso", "massa_magra", "gordura", "cintura", "agua", "energia"]
+            m_cols = st.columns(len(cols_nomes))
+            for i, c in enumerate(cols_nomes):
+                if c in df.columns:
+                    val = df[c].iloc[-1]
+                    dif = val - df[c].iloc[-2] if len(df) > 1 else 0
+                    m_cols[i].metric(c.replace("_", " ").title(), f"{val}", f"{dif:.1f}")
 
-    st.divider()
-    t1, t2 = st.tabs(["📈 Gráficos", "📋 Tabela"])
-    with t1:
-        st.line_chart(df.set_index('data')[['peso', 'massa_magra']], color=["#00ff41", "#00d4ff"])
-        st.bar_chart(df.set_index('data')['energia'], color="#ffff00")
-    with t2:
-        st.dataframe(df.sort_values("data", ascending=False), use_container_width=True, hide_index=True)
-else:
-    st.info("Sem dados. Use a lateral.")
+            st.divider()
+            t1, t2 = st.tabs(["📈 Gráficos", "📋 Tabela"])
+            with t1:
+                st.line_chart(df.set_index('data')[['peso', 'massa_magra']], color=["#00ff41", "#00d4ff"])
+                if 'energia' in df.columns:
+                    st.bar_chart(df.set_index('data')['energia'], color="#ffff00")
+            with t2:
+                st.dataframe(df.sort_values("data", ascending=False), use_container_width=True, hide_index=True)
+        else:
+             st.warning("Dados inválidos detectados. Por favor, tente importar o CSV novamente.")
+    else:
+        st.info("Sem dados. Use a lateral para inserir ou importar.")
+
+except Exception as e:
+    st.error(f"Erro ao carregar dados: {e}")
+    st.info("Dica: Tente importar o CSV novamente para limpar o banco de dados.")
